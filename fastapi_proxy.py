@@ -11,7 +11,7 @@ import re
 import logging
 from pydantic import BaseSettings
 import functools
-import anyio
+from anyio import create_task_group, run, create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
 from fastapi import FastAPI, Request
 import httpx
@@ -20,6 +20,7 @@ import httpx
 app = FastAPI()
 
 tg_session = httpx.AsyncClient()
+task_group = create_task_group()
 
 ALL_TG_METHODS = [
     'sendMessage',
@@ -40,6 +41,14 @@ logging.basicConfig(
     level='INFO',
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
 )
+
+common_sender_queue_input, common_sender_queue_output = create_memory_object_stream(100)
+# FIXME какой должен быть запас, чтобы его было достаточно
+delayed_stream_messages = deque()  # отложенные на время сообщения из common_sender_queue_output
+
+ban_429 = None
+
+
 
 # FIXME replace dataclass with Pydantic alternative?
 @dataclasses.dataclass
@@ -83,12 +92,7 @@ class SendRegistry(deque):
         ]
 
 
-common_sender_queue_input, common_sender_queue_output = anyio.create_memory_object_stream(100)  # FIXME какой должен быть запас, чтобы его было достаточно
 last_sends = SendRegistry()  # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
-delayed_stream_messages = deque()  # отложенные на время сообщения из common_sender_queue_output
-
-ban_429 = None
-
 
 class Settings(BaseSettings):
     tg_token: str
@@ -209,40 +213,19 @@ def log_request(func):
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
 async def handle_common_request(endpoint_method: str, request: Request):
 
-    is_limited = endpoint_method in LIMITED_TG_METHODS  # FIXME добавить больше методов API для торможения: sendPhoto, ...
-    if not is_limited:
-        return await stream_http_request(request)
-
-    # FIXME запрос может быть в любой из кодировок:
-    # - URL query string
-    # - application/x-www-form-urlencoded
-    # - application/json (except for uploading files)
-    # - multipart/form-data (use to upload files)
-    # chat_id может прятаться либо в querystring, либо в body в одной из трёх кодировок.
-    # Надо искать chat_id в каждом из источников
-
-    # payload = await request.get_data(as_text=True, parse_form_data=True)
-    # chat_id: str = more_itertools.first(parse_qs(payload).get('chat_id', [None]))  # FIXME как отреагировать если нет chat_id?
-
-    # FIXME 'undefined' на время, пока не удается выделить chat_id из request без его обнуления
     chat_id: str = 'undefined'
-
-    logger.info(f'[{chat_id}] {endpoint_method} in.')
-    logger.info(f'queue_length={count_queue()}')
-    
-    sending_started, sending_finished = anyio.Event(), anyio.Event()
+    sending_started, sending_finished = Event(), Event()
     try:
         await common_sender_queue_input.send(
             (chat_id, sending_started, sending_finished)
         )
-        # await sending_started.wait()
+        await sending_started.wait()
         # FIXME it is stoping sendung message
         results = await stream_http_request(request)
-        logger.info(f'[{chat_id}] {endpoint_method} out.')
+        return results
     finally:
-        await sending_finished.set()  # cancel event even if exception occurs
+        await sending_finished.set()
 
-    return results
 
 @app.get('/handle_file')
 @log_request
@@ -341,7 +324,7 @@ async def manage_sending_delay():
     async def delay(timeout, payload):
         delayed_stream_messages.append(payload)
         try:
-            await anyio.sleep(timeout)
+            await sleep(timeout)
             await common_sender_queue_input.send(payload)
         finally:
             delayed_stream_messages.remove(payload)
@@ -355,7 +338,7 @@ async def manage_sending_delay():
                 1 / settings.per_chat_requests_per_second_limit,
                 1 / settings.requests_per_second_limit,
             )
-            app.nursery.start_soon(delay, timeout, (chat_id, sending_started, sending_finished))
+            task_group.start_soon(delay, timeout, (chat_id, sending_started, sending_finished))
             continue
 
         sending_started.set()
@@ -363,15 +346,15 @@ async def manage_sending_delay():
         send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
         last_sends.append(send_record)
 
-        app.nursery.start_soon(register_sending_finished, sending_finished, send_record)
+        task_group.start_soon(register_sending_finished, sending_finished, send_record)
 
         # TODO реализовать умную задержку с использованием last_sends
-        await anyio.sleep(1 / settings.requests_per_second_limit)
+        await sleep(1 / settings.requests_per_second_limit)
 
 
 async def cleanup_registries():
     while True:
-        await anyio.sleep(1)
+        await sleep(1)
         last_sends.remove_obsolete_sends()
 
 
@@ -383,15 +366,18 @@ if __name__ == "__main__":
 
 
 
-# @app.before_serving
-# async def startup():
-#     app.nursery.start_soon(manage_sending_delay)
-#     app.nursery.start_soon(cleanup_registries)
+
+async def startup():
+    task_group.start_soon(manage_sending_delay)
+    task_group.start_soon(cleanup_registries)
 
 
-def configure_app():
+run(startup)
 
-    init_rollbar_if_enabled()
+
+# def configure_app():
+#
+#     init_rollbar_if_enabled()
 
 
 

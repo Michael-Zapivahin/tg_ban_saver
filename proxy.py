@@ -79,8 +79,8 @@ class SendRegistry(deque):
         ]
 
 
-common_sender_queue_input, common_sender_queue_output = anyio.create_memory_object_stream(
-    100)  # FIXME какой должен быть запас, чтобы его было достаточно
+common_sender_queue_input, common_sender_queue_output = anyio.create_memory_object_stream(100)
+# FIXME какой должен быть запас, чтобы его было достаточно
 last_sends = SendRegistry()  # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
 delayed_stream_messages = deque()  # отложенные на время сообщения из common_sender_queue_output
 
