@@ -331,21 +331,21 @@ async def manage_sending_delay():
     async for chat_id, sending_started, sending_finished in common_sender_queue_output:
         if sending_finished.is_set():  # skip cancelled message
             continue
+        async with create_task_group() as tg:
+            if len(last_sends.same_chat_sends_since(chat_id)) >= settings.per_chat_requests_per_second_limit:
+                timeout = max(
+                    1 / settings.per_chat_requests_per_second_limit,
+                    1 / settings.requests_per_second_limit,
+                )
+                tg.start_soon(delay, timeout, (chat_id, sending_started, sending_finished))
+                continue
 
-        if len(last_sends.same_chat_sends_since(chat_id)) >= settings.per_chat_requests_per_second_limit:
-            timeout = max(
-                1 / settings.per_chat_requests_per_second_limit,
-                1 / settings.requests_per_second_limit,
-            )
-            background_tasks.add_task(delay, timeout, (chat_id, sending_started, sending_finished))
-            continue
+            sending_started.set()
 
-        sending_started.set()
+            send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
+            last_sends.append(send_record)
 
-        send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
-        last_sends.append(send_record)
-
-        background_tasks.add_task(register_sending_finished, sending_finished, send_record)
+            tg.start_soon(register_sending_finished, sending_finished, send_record)
 
         # TODO реализовать умную задержку с использованием last_sends
         await sleep(1 / settings.requests_per_second_limit)
@@ -357,7 +357,7 @@ async def cleanup_registries():
         last_sends.remove_obsolete_sends()
 
 
-# @app.on_event("startup")
+
 async def app_startup():
     async with create_task_group() as tg:
         tg.start_soon(cleanup_registries)
