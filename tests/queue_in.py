@@ -18,6 +18,7 @@ async def process_items() -> None:
 
     async for (chat_id, sending_started, sending_finished) in receive_stream:
         print("receive_stream")
+        anyio.sleep(5)
         async with create_task_group() as tg:
             timeout = 2
             tg.start_soon(delay, timeout, (chat_id, sending_started, sending_finished))

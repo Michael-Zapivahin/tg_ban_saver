@@ -1,3 +1,4 @@
+import asyncio
 import time
 import os
 import dataclasses
@@ -19,8 +20,11 @@ from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 import httpx
 
+# class MyApp(FastAPI, trio):
+#     nursery: trio.Nursery
 
 app = FastAPI()
+# app = MyApp()
 
 tg_session = httpx.AsyncClient()
 
@@ -220,8 +224,7 @@ async def handle_common_request(endpoint_method: str, request: Request):
     sending_started, sending_finished = Event(), Event()
     try:
         await common_sender_queue_input.send((chat_id, sending_started, sending_finished))
-        sending_started.set()
-        await sending_started.wait()
+        await sending_finished.wait()
         results = await stream_http_request(request)
         return results
     finally:
@@ -337,7 +340,7 @@ async def manage_sending_delay():
                     1 / settings.per_chat_requests_per_second_limit,
                     1 / settings.requests_per_second_limit,
                 )
-                tg.start_soon(delay, timeout, (chat_id, sending_started, sending_finished))
+                asyncio.create_task(delay, timeout, (chat_id, sending_started, sending_finished))
                 continue
 
             sending_started.set()
@@ -345,7 +348,7 @@ async def manage_sending_delay():
             send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
             last_sends.append(send_record)
 
-            tg.start_soon(register_sending_finished, sending_finished, send_record)
+            # asyncio.create_task(register_sending_finished, sending_finished, send_record)
 
         # TODO реализовать умную задержку с использованием last_sends
         await sleep(1 / settings.requests_per_second_limit)
@@ -357,19 +360,13 @@ async def cleanup_registries():
         last_sends.remove_obsolete_sends()
 
 
-
+@app.on_event("startup")
 async def app_startup():
-    async with create_task_group() as tg:
-        tg.start_soon(cleanup_registries)
-        tg.start_soon(manage_sending_delay)
-
-
-async def start_app():
-    await app_startup()
+    asyncio.create_task(cleanup_registries())
+    asyncio.create_task(manage_sending_delay())
 
 
 if __name__ == "__main__":
-    start_app()
     uvicorn.run(app, host="127.0.0.1", port=5000)
 
 
