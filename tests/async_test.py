@@ -1,4 +1,3 @@
-
 import time
 import os
 import dataclasses
@@ -8,25 +7,22 @@ from collections import deque
 
 import anyio
 import rollbar
-import trio
 import uvicorn
 import re
 import logging
 from pydantic import BaseSettings
 import functools
-from anyio import create_task_group, run, create_memory_object_stream, Event, sleep
+from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
 from fastapi import FastAPI, Request, BackgroundTasks
-from fastapi.responses import StreamingResponse
 import httpx
-
+from contextlib import asynccontextmanager
 
 app = FastAPI()
 
 tg_session = httpx.AsyncClient()
 
 background_tasks = BackgroundTasks()
-
 
 ALL_TG_METHODS = [
     'sendMessage',
@@ -53,7 +49,6 @@ common_sender_queue_input, common_sender_queue_output = create_memory_object_str
 delayed_stream_messages = deque()  # отложенные на время сообщения из common_sender_queue_output
 
 ban_429 = None
-
 
 
 # FIXME replace dataclass with Pydantic alternative?
@@ -100,6 +95,7 @@ class SendRegistry(deque):
 
 last_sends = SendRegistry()  # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
 
+
 class Settings(BaseSettings):
     tg_token: str
     tg_server_url: str = 'https://api.telegram.org'
@@ -127,6 +123,7 @@ RESPONSE_HEADERS_WHITELIST = re.compile(
 )
 
 settings = Settings()
+
 
 def filter_tuples(headers, whitelist_regexp=REQUEST_HEADERS_WHITELIST):
     for key, value in headers:
@@ -173,7 +170,6 @@ def deny_on_429(func):
 
 @deny_on_429
 async def stream_http_request(fast_request):
-
     tg_server_url = settings.tg_server_url
     api_endpoint_url = f'{tg_server_url}{fast_request.url.path}'
 
@@ -204,7 +200,6 @@ async def stream_http_request(fast_request):
     )
 
 
-
 def log_request(func):
     @functools.wraps(func)
     async def func_wrapped(*args, **kwargs):
@@ -213,6 +208,7 @@ def log_request(func):
             return await func(*args, **kwargs)
         finally:
             logger.info(f'Request out. {args!r} {kwargs!r}')
+
     return func_wrapped
 
 
@@ -222,7 +218,6 @@ async def handle_common_request(endpoint_method: str, request: Request):
     sending_started, sending_finished = Event(), Event()
     try:
         await common_sender_queue_input.send((chat_id, sending_started, sending_finished))
-        sending_started.set()
         await sending_started.wait()
         results = await stream_http_request(request)
         return results
@@ -249,7 +244,7 @@ def count_queue():
 async def get_status():
     return {
         'messages_waited': count_queue(),
-        'banned_till': ban_429 and ban_429.banned_till >= datetime.now() and ban_429.banned_till.timestamp() or None, 
+        'banned_till': ban_429 and ban_429.banned_till >= datetime.now() and ban_429.banned_till.timestamp() or None,
     }
 
 
@@ -314,10 +309,8 @@ def get_throttler(rate, per):
     return throttler
 
 
-
 # @get_throttler(30, 1000)
 async def manage_sending_delay():
-    
     async def register_sending_finished(sending_finished, send_record):
         try:
             await sending_finished.wait()
@@ -335,7 +328,7 @@ async def manage_sending_delay():
     async for chat_id, sending_started, sending_finished in common_sender_queue_output:
         if sending_finished.is_set():  # skip cancelled message
             continue
-        
+
         if len(last_sends.same_chat_sends_since(chat_id)) >= settings.per_chat_requests_per_second_limit:
             timeout = max(
                 1 / settings.per_chat_requests_per_second_limit,
@@ -357,8 +350,19 @@ async def manage_sending_delay():
 
 async def cleanup_registries():
     while True:
-        await sleep(1)
+        await anyio.sleep(1)
+        # print(time.time())
         last_sends.remove_obsolete_sends()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(cleanup_registries)
+        tg.start_soon(manage_sending_delay)
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 if __name__ == "__main__":
