@@ -224,7 +224,7 @@ async def handle_common_request(endpoint_method: str, request: Request):
     sending_started, sending_finished = Event(), Event()
     try:
         await common_sender_queue_input.send((chat_id, sending_started, sending_finished))
-        await sending_finished.wait()
+        await sending_started.wait()
         results = await stream_http_request(request)
         return results
     finally:
