@@ -1,4 +1,4 @@
-
+import asyncio
 import time
 import os
 import dataclasses
@@ -340,7 +340,7 @@ async def manage_sending_delay():
                 1 / settings.per_chat_requests_per_second_limit,
                 1 / settings.requests_per_second_limit,
             )
-            background_tasks.add_task(delay, timeout, (chat_id, sending_started, sending_finished))
+            asyncio.create_task(delay, timeout, (chat_id, sending_started, sending_finished))
             continue
 
         sending_started.set()
@@ -348,7 +348,7 @@ async def manage_sending_delay():
         send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
         last_sends.append(send_record)
 
-        background_tasks.add_task(register_sending_finished, sending_finished, send_record)
+        asyncio.create_task(register_sending_finished, sending_finished, send_record)
 
         # TODO реализовать умную задержку с использованием last_sends
         await sleep(1 / settings.requests_per_second_limit)
@@ -358,6 +358,12 @@ async def cleanup_registries():
     while True:
         await sleep(1)
         last_sends.remove_obsolete_sends()
+
+
+@app.on_event("startup")
+async def app_startup():
+    asyncio.create_task(cleanup_registries())
+    asyncio.create_task(manage_sending_delay())
 
 
 if __name__ == "__main__":
