@@ -323,10 +323,10 @@ async def manage_sending_delay():
         finally:
             send_record.finished_at = time.monotonic()
 
-    async def delay(timeout, payload):
+    async def delay(delay_time: float, payload):
         delayed_stream_messages.append(payload)
         try:
-            await sleep(timeout)
+            await sleep(delay_time)
             await common_sender_queue_input.send(payload)
         finally:
             delayed_stream_messages.remove(payload)
@@ -359,7 +359,7 @@ async def cleanup_registries():
         await sleep(1)
         last_sends.remove_obsolete_sends()
 
-
+@app.get("/startup")
 @app.on_event("startup")
 async def app_startup():
     asyncio.create_task(cleanup_registries())
