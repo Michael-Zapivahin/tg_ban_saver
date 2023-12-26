@@ -16,7 +16,7 @@ from pydantic import BaseSettings
 import functools
 from anyio import create_task_group, run, create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
 import httpx
 
@@ -217,8 +217,8 @@ def log_request(func):
 
 
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
-async def handle_common_request(endpoint_method: str, request: Request):
-    chat_id: str = 'undefined'
+async def handle_common_request(endpoint_method: str, request: Request, data=Body()):
+    chat_id: str = data['chat_id']
     sending_started, sending_finished = Event(), Event()
     try:
         await common_sender_queue_input.send((chat_id, sending_started, sending_finished))
