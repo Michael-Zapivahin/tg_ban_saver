@@ -1,34 +1,26 @@
 import asyncio
 import time
-import os
 import dataclasses
 from datetime import datetime, timedelta
 import json
 from collections import deque
 
-import anyio
-import rollbar
-import trio
 import uvicorn
 import re
 import logging
-from pydantic import BaseSettings
 import functools
-from anyio import create_task_group, run, create_memory_object_stream, Event, sleep
+from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
-from fastapi import FastAPI, Request, BackgroundTasks
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI
+from fastapi import Request
+from fastapi import Body
 import httpx
-
-# class MyApp(FastAPI, trio):
-#     nursery: trio.Nursery
+from contextlib import asynccontextmanager
+from pydantic import BaseSettings
 
 app = FastAPI()
-# app = MyApp()
 
 tg_session = httpx.AsyncClient()
-
-background_tasks = BackgroundTasks()
 
 ALL_TG_METHODS = [
     'sendMessage',
@@ -59,7 +51,7 @@ ban_429 = None
 
 # FIXME replace dataclass with Pydantic alternative?
 @dataclasses.dataclass
-class Ban429():
+class Ban429(BaseSettings):
     banned_till: datetime
     response_body_payload: dict
 
@@ -102,7 +94,7 @@ class SendRegistry(deque):
 last_sends = SendRegistry()  # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
 
 
-class Settings(BaseSettings):
+class Settings():
     tg_token: str
     tg_server_url: str = 'https://api.telegram.org'
     rollbar_token: str = ''
@@ -218,17 +210,29 @@ def log_request(func):
     return func_wrapped
 
 
-@app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
-async def handle_common_request(endpoint_method: str, request: Request):
-    chat_id: str = 'undefined'
+@app.post(f"/bot6635610575:AAElSJZ3-2pSShXyx6PxHMQCMbca-Hhdd_c/{{endpoint_method}}")
+async def handle_common_request(endpoint_method: str, request: Request, data=Body()):
+    # is_limited = endpoint_method in LIMITED_TG_METHODS
+    # if not is_limited:
+    #     return await stream_http_request(request)
+
+    chat_id: str = data'chat_id']
+
+    logger.info(f'[{chat_id}] {endpoint_method} in.')
+    logger.info(f'queue_length={count_queue()}')
+
     sending_started, sending_finished = Event(), Event()
     try:
         await common_sender_queue_input.send((chat_id, sending_started, sending_finished))
+        for chat_id, sending_started, sending_finished in common_sender_queue_output:
+            pass
         await sending_started.wait()
         results = await stream_http_request(request)
-        return results
+        logger.info(f'[{chat_id}] {endpoint_method} out.')
     finally:
         await sending_finished.set()
+
+    return results
 
 
 @app.get('/handle_file')
@@ -252,29 +256,6 @@ async def get_status():
         'messages_waited': count_queue(),
         'banned_till': ban_429 and ban_429.banned_till >= datetime.now() and ban_429.banned_till.timestamp() or None,
     }
-
-
-async def nofity_rollbar_about_exception(sender, exception, **extra):
-    rollbar.report_exc_info()
-
-
-def init_rollbar_if_enabled():
-    if not settings.rollbar_token:
-        print('Skip Rollbar initialization.')
-        return
-
-    rollbar.init(
-        access_token=settings.rollbar_token,
-        environment=settings.rollbar_environment,
-        root=os.path.dirname(os.path.realpath(__file__)),
-        locals={
-            'safe_repr': False,  # enable repr(obj)
-        },
-        allow_logging_basic_config=False,  # Flask/Quart already sets up logging
-    )
-
-    # got_request_exception.connect(nofity_rollbar_about_exception, app)
-    logger.info('Rollbar initialized.')
 
 
 class Object(object):
@@ -316,17 +297,17 @@ def get_throttler(rate, per):
 
 
 # @get_throttler(30, 1000)
-async def manage_sending_delay():
+async def manage_sending_delay(tg):
     async def register_sending_finished(sending_finished, send_record):
         try:
             await sending_finished.wait()
         finally:
             send_record.finished_at = time.monotonic()
 
-    async def delay(timeout, payload):
+    async def delay(delay_time: float, payload):
         delayed_stream_messages.append(payload)
         try:
-            await sleep(timeout)
+            await sleep(delay_time)
             await common_sender_queue_input.send(payload)
         finally:
             delayed_stream_messages.remove(payload)
@@ -334,21 +315,21 @@ async def manage_sending_delay():
     async for chat_id, sending_started, sending_finished in common_sender_queue_output:
         if sending_finished.is_set():  # skip cancelled message
             continue
-        async with create_task_group() as tg:
-            if len(last_sends.same_chat_sends_since(chat_id)) >= settings.per_chat_requests_per_second_limit:
-                timeout = max(
-                    1 / settings.per_chat_requests_per_second_limit,
-                    1 / settings.requests_per_second_limit,
-                )
-                asyncio.create_task(delay, timeout, (chat_id, sending_started, sending_finished))
-                continue
 
-            sending_started.set()
+        if len(last_sends.same_chat_sends_since(chat_id)) >= settings.per_chat_requests_per_second_limit:
+            timeout = max(
+                1 / settings.per_chat_requests_per_second_limit,
+                1 / settings.requests_per_second_limit,
+            )
+            tg.create_task(delay(timeout, (chat_id, sending_started, sending_finished)))
+            continue
 
-            send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
-            last_sends.append(send_record)
+        sending_started.set()
 
-            # asyncio.create_task(register_sending_finished, sending_finished, send_record)
+        send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
+        last_sends.append(send_record)
+
+        tg.create_task(register_sending_finished(sending_finished, send_record))
 
         # TODO реализовать умную задержку с использованием last_sends
         await sleep(1 / settings.requests_per_second_limit)
@@ -360,10 +341,11 @@ async def cleanup_registries():
         last_sends.remove_obsolete_sends()
 
 
-@app.on_event("startup")
-async def app_startup():
-    asyncio.create_task(cleanup_registries())
-    asyncio.create_task(manage_sending_delay())
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(cleanup_registries())
+        tg.create_task(manage_sending_delay(tg))
 
 
 if __name__ == "__main__":

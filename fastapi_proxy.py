@@ -5,19 +5,14 @@ import dataclasses
 from datetime import datetime, timedelta
 import json
 from collections import deque
-
-import anyio
-import rollbar
-import trio
 import uvicorn
 import re
 import logging
 from pydantic import BaseSettings
 import functools
-from anyio import create_task_group, run, create_memory_object_stream, Event, sleep
+from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
 from fastapi import FastAPI, Request, BackgroundTasks, Body
-from fastapi.responses import StreamingResponse
 import httpx
 
 
@@ -226,7 +221,7 @@ async def handle_common_request(endpoint_method: str, request: Request, data=Bod
         results = await stream_http_request(request)
         return results
     finally:
-        await sending_finished.set()
+        sending_finished.set()
 
 
 @app.get('/handle_file')
@@ -250,29 +245,6 @@ async def get_status():
         'messages_waited': count_queue(),
         'banned_till': ban_429 and ban_429.banned_till >= datetime.now() and ban_429.banned_till.timestamp() or None, 
     }
-
-
-async def nofity_rollbar_about_exception(sender, exception, **extra):
-    rollbar.report_exc_info()
-
-
-def init_rollbar_if_enabled():
-    if not settings.rollbar_token:
-        print('Skip Rollbar initialization.')
-        return
-
-    rollbar.init(
-        access_token=settings.rollbar_token,
-        environment=settings.rollbar_environment,
-        root=os.path.dirname(os.path.realpath(__file__)),
-        locals={
-            'safe_repr': False,  # enable repr(obj)
-        },
-        allow_logging_basic_config=False,  # Flask/Quart already sets up logging
-    )
-
-    # got_request_exception.connect(nofity_rollbar_about_exception, app)
-    logger.info('Rollbar initialized.')
 
 
 class Object(object):
@@ -359,7 +331,7 @@ async def cleanup_registries():
         await sleep(1)
         last_sends.remove_obsolete_sends()
 
-@app.get("/startup")
+
 @app.on_event("startup")
 async def app_startup():
     asyncio.create_task(cleanup_registries())
