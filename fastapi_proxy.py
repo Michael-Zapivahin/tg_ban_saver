@@ -38,7 +38,9 @@ logger = logging.getLogger(__name__)
 
 common_sender_queue_input, common_sender_queue_output = create_memory_object_stream(100)
 # FIXME какой должен быть запас, чтобы его было достаточно
-delayed_stream_messages = deque()  # отложенные на время сообщения из common_sender_queue_output
+delayed_stream_messages = deque()
+# отложенные на время сообщения из common_sender_queue_output
+ban_429 = None
 
 
 # FIXME replace dataclass with Pydantic alternative?
