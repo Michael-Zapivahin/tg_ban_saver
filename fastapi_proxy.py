@@ -1,6 +1,5 @@
 import asyncio
 import time
-import os
 import dataclasses
 from datetime import datetime, timedelta
 import json
@@ -32,23 +31,14 @@ ALL_TG_METHODS = [
 ]
 LIMITED_TG_METHODS = [
     'sendMessage',
-    # Disabled because of proxy bug
-    # 'sendDocument',
     'sendPhoto',
 ]
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level='INFO',
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-)
 
 common_sender_queue_input, common_sender_queue_output = create_memory_object_stream(100)
 # FIXME какой должен быть запас, чтобы его было достаточно
 delayed_stream_messages = deque()  # отложенные на время сообщения из common_sender_queue_output
-
-ban_429 = None
-
 
 
 # FIXME replace dataclass with Pydantic alternative?
@@ -69,7 +59,7 @@ class Ban429():
 class SendRecord():
     chat_id: str
     started_at: float
-    finished_at: float = None
+    finished_at: float
 
 
 class SendRegistry(deque):
@@ -93,7 +83,8 @@ class SendRegistry(deque):
         ]
 
 
-last_sends = SendRegistry()  # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
+last_sends = SendRegistry()
+# записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
 
 class Settings(BaseSettings):
     tg_token: str
@@ -287,7 +278,7 @@ def get_throttler(rate, per):
 
 
 # @get_throttler(30, 1000)
-async def manage_sending_delay():
+async def manage_sending_delay(tg):
     
     async def register_sending_finished(sending_finished, send_record):
         try:
@@ -312,7 +303,7 @@ async def manage_sending_delay():
                 1 / settings.per_chat_requests_per_second_limit,
                 1 / settings.requests_per_second_limit,
             )
-            asyncio.create_task(delay(timeout, (chat_id, sending_started, sending_finished)))
+            tg.create_task(delay(timeout, (chat_id, sending_started, sending_finished)))
             continue
 
         sending_started.set()
@@ -320,7 +311,7 @@ async def manage_sending_delay():
         send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
         last_sends.append(send_record)
 
-        asyncio.create_task(register_sending_finished(sending_finished, send_record))
+        tg.create_task(register_sending_finished(sending_finished, send_record))
 
         # TODO реализовать умную задержку с использованием last_sends
         await sleep(1 / settings.requests_per_second_limit)
@@ -333,9 +324,14 @@ async def cleanup_registries():
 
 
 @app.on_event("startup")
-async def app_startup():
-    asyncio.create_task(cleanup_registries())
-    asyncio.create_task(manage_sending_delay())
+async def start_delay_manager():
+    logging.basicConfig(
+        level='INFO',
+        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+    )
+    async with asyncio.TaskGroup() as tg:
+        asyncio.create_task(cleanup_registries())
+        asyncio.create_task(manage_sending_delay(tg))
 
 
 if __name__ == "__main__":

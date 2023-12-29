@@ -1,22 +1,19 @@
 import asyncio
 import time
+import os
 import dataclasses
 from datetime import datetime, timedelta
 import json
 from collections import deque
-
 import uvicorn
 import re
 import logging
+from pydantic import BaseSettings
 import functools
 from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
-from fastapi import FastAPI
-from fastapi import Request
-from fastapi import Body
+from fastapi import FastAPI, Request, Body
 import httpx
-from contextlib import asynccontextmanager
-from pydantic import BaseSettings
 
 app = FastAPI()
 
@@ -42,16 +39,16 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
 )
 
-common_sender_queue_input, common_sender_queue_output = create_memory_object_stream(100)
+send_stream, receive_stream = create_memory_object_stream(100)
 # FIXME какой должен быть запас, чтобы его было достаточно
-delayed_stream_messages = deque()  # отложенные на время сообщения из common_sender_queue_output
-
+delayed_stream_messages = deque()
+# отложенные на время сообщения из common_sender_queue_output
 ban_429 = None
 
 
 # FIXME replace dataclass with Pydantic alternative?
 @dataclasses.dataclass
-class Ban429(BaseSettings):
+class Ban429():
     banned_till: datetime
     response_body_payload: dict
 
@@ -94,7 +91,7 @@ class SendRegistry(deque):
 last_sends = SendRegistry()  # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
 
 
-class Settings():
+class Settings(BaseSettings):
     tg_token: str
     tg_server_url: str = 'https://api.telegram.org'
     rollbar_token: str = ''
@@ -210,29 +207,17 @@ def log_request(func):
     return func_wrapped
 
 
-@app.post(f"/bot6635610575:AAElSJZ3-2pSShXyx6PxHMQCMbca-Hhdd_c/{{endpoint_method}}")
+@app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
 async def handle_common_request(endpoint_method: str, request: Request, data=Body()):
-    # is_limited = endpoint_method in LIMITED_TG_METHODS
-    # if not is_limited:
-    #     return await stream_http_request(request)
-
-    chat_id: str = data'chat_id']
-
-    logger.info(f'[{chat_id}] {endpoint_method} in.')
-    logger.info(f'queue_length={count_queue()}')
-
+    chat_id: str = data['chat_id']
     sending_started, sending_finished = Event(), Event()
     try:
-        await common_sender_queue_input.send((chat_id, sending_started, sending_finished))
-        for chat_id, sending_started, sending_finished in common_sender_queue_output:
-            pass
+        await send_stream.send((chat_id, sending_started, sending_finished))
         await sending_started.wait()
         results = await stream_http_request(request)
-        logger.info(f'[{chat_id}] {endpoint_method} out.')
+        return results
     finally:
-        await sending_finished.set()
-
-    return results
+        sending_finished.set()
 
 
 @app.get('/handle_file')
@@ -242,7 +227,7 @@ async def handle_file(path: str, request: Request):
 
 
 def count_queue():
-    send_waited_count = common_sender_queue_output.statistics().current_buffer_used
+    send_waited_count = receive_stream.statistics().current_buffer_used
     in_progress_sends_count = len(last_sends.get_sends_in_progress())
     delayed_sends_count = len(delayed_stream_messages)
     queue = send_waited_count + in_progress_sends_count + delayed_sends_count
@@ -297,7 +282,7 @@ def get_throttler(rate, per):
 
 
 # @get_throttler(30, 1000)
-async def manage_sending_delay(tg):
+async def manage_sending_delay():
     async def register_sending_finished(sending_finished, send_record):
         try:
             await sending_finished.wait()
@@ -308,11 +293,11 @@ async def manage_sending_delay(tg):
         delayed_stream_messages.append(payload)
         try:
             await sleep(delay_time)
-            await common_sender_queue_input.send(payload)
+            await send_stream.send(payload)
         finally:
             delayed_stream_messages.remove(payload)
 
-    async for chat_id, sending_started, sending_finished in common_sender_queue_output:
+    async for chat_id, sending_started, sending_finished in receive_stream:
         if sending_finished.is_set():  # skip cancelled message
             continue
 
@@ -321,7 +306,7 @@ async def manage_sending_delay(tg):
                 1 / settings.per_chat_requests_per_second_limit,
                 1 / settings.requests_per_second_limit,
             )
-            tg.create_task(delay(timeout, (chat_id, sending_started, sending_finished)))
+            asyncio.create_task(delay(timeout, (chat_id, sending_started, sending_finished)))
             continue
 
         sending_started.set()
@@ -329,7 +314,7 @@ async def manage_sending_delay(tg):
         send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
         last_sends.append(send_record)
 
-        tg.create_task(register_sending_finished(sending_finished, send_record))
+        asyncio.create_task(register_sending_finished(sending_finished, send_record))
 
         # TODO реализовать умную задержку с использованием last_sends
         await sleep(1 / settings.requests_per_second_limit)
@@ -341,11 +326,12 @@ async def cleanup_registries():
         last_sends.remove_obsolete_sends()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+@app.on_event("startup")
+async def start_app():
     async with asyncio.TaskGroup() as tg:
-        tg.create_task(cleanup_registries())
-        tg.create_task(manage_sending_delay(tg))
+        asyncio.create_task(cleanup_registries())
+        asyncio.create_task(manage_sending_delay())
+
 
 
 if __name__ == "__main__":

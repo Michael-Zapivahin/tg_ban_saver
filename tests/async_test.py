@@ -1,31 +1,51 @@
-from anyio import create_task_group, create_memory_object_stream, run
-from anyio.streams.memory import MemoryObjectReceiveStream
-import time
+import asyncio
+from anyio import create_memory_object_stream, Event
+from anyio import run
+from fastapi import FastAPI
+
+app = FastAPI()
+
+send_stream, receive_stream = create_memory_object_stream(100)
 
 
-def now_time():
-    return time.time()
+@app.get('/start')
+async def handle_common_request():
+    chat_id = 'chat_id'
+    sending_started, sending_finished = Event(), Event()
+    send_object = (chat_id, sending_started, sending_finished)
+    print('send')
+    await send_stream.send(send_object)
+    await sending_started.wait()
+    print('receive')
+    results = True
+    return results
 
 
-async def process_items(receive_stream: MemoryObjectReceiveStream[str]) -> None:
-    async with receive_stream:
-        async for item in receive_stream:
-            print('received', item)
+
+async def manage_sending_delay():
+    async for chat_id, sending_started, sending_finished in receive_stream:
+        sending_started.set()
 
 
+
+# @app.on_event('startup')
 async def main():
-    # The [str] specifies the type of the objects being passed through the
-    # memory object stream. This is a bit of trick, as create_memory_object_stream
-    # is actually a class masquerading as a function.
-    send_stream, receive_stream = create_memory_object_stream[str]()
-    async with create_task_group() as tg:
-        tg.start_soon(process_items, receive_stream)
-        async with send_stream:
-            for num in range(10):
-                send_stream.send(now_time())
-            # for num in range(10):
-                # print(f'number {num}')
-                # await send_stream.send(f'number {num}')
+    async with asyncio.TaskGroup() as tg:
+        asyncio.create_task(manage_sending_delay())
+        tg.create_task(manage_sending_delay())
 
 
-run(main)
+
+# if __name__ == "__main__":
+#     import uvicorn
+#     # run(main)
+#     uvicorn.run(app, host="127.0.0.1", port=5000)
+
+
+
+
+
+
+
+
+
