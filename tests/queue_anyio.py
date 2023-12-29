@@ -29,8 +29,8 @@ async def main():
         chat_id = '12345'
         sending_started, sending_finished = anyio.Event(), anyio.Event()
         await send_stream.send((chat_id, sending_started, sending_finished))
-        # await sending_started.wait()
-        # print('results')
+        await sending_started.wait()
+        print('results')
 
 
 run(main)
