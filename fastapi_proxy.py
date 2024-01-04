@@ -63,7 +63,7 @@ class Ban429():
 class SendRecord():
     chat_id: str
     started_at: float
-    finished_at: float
+    finished_at: float = 0
 
 
 class SendRegistry(deque):
@@ -215,7 +215,7 @@ async def handle_common_testing(chat_id: int):
         await sending_started.wait()
         result = {
             'ok': 'endpoint_method',
-            'count': count_queue(),
+            'count': len(last_sends.get_sends_in_progress()),
         }
     except:
         result = {
@@ -304,7 +304,7 @@ def get_throttler(rate, per):
     return throttler
 
 
-async def manage_sending_delay():
+async def manage_sending_delay(tg):
     
     async def register_sending_finished(sending_finished, send_record):
         try:
@@ -330,17 +330,17 @@ async def manage_sending_delay():
                 1 / settings.per_chat_requests_per_second_limit,
                 1 / settings.requests_per_second_limit,
             )
-            asyncio.create_task(delay(timeout, (chat_id, sending_started, sending_finished)))
+            tg.create_task(delay(timeout, (chat_id, sending_started, sending_finished)))
             continue
 
         sending_started.set()
 
-        send_record = SendRecord(chat_id=chat_id, started_at=time.monotonic(), finished_at=time.time())
-        last_sends.append(send_record)
+        sent_record = SendRecord(chat_id=chat_id, started_at=time.monotonic())
+        last_sends.append(sent_record)
 
-        asyncio.create_task(register_sending_finished(sending_finished, send_record))
+        tg.create_task(register_sending_finished(sending_finished, sent_record))
         # TODO make a clever delay by the last_sends
-        await sleep(1 / settings.requests_per_second_limit)
+        # await sleep(1 / settings.requests_per_second_limit)
 
 
 async def cleanup_registries():
@@ -357,7 +357,7 @@ async def start_delay_manager():
     )
     async with asyncio.TaskGroup() as tg:
         asyncio.create_task(cleanup_registries())
-        asyncio.create_task(manage_sending_delay())
+        asyncio.create_task(manage_sending_delay(asyncio))
 
 
 if __name__ == "__main__":

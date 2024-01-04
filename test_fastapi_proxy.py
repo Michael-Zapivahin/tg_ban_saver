@@ -11,9 +11,18 @@ def test_status():
 
 def test_send_queue():
     with TestClient(app) as client:
-        for i in range(111, 122):
-            response = client.get(f"/endpoint_method/{i}")
+        for i in range(100, 150):
+            response = client.get(f"/endpoint_method/{1111}")
             assert response.status_code == 200
-            assert response.json() == {"ok": "endpoint_method", "count": 0}
+            assert response.json()['count'] <= 30
 
 
+def test_len_queue():
+    with TestClient(app) as client:
+        count = 0
+        for i in range(100, 220):
+            response = client.get(f"/endpoint_method/{1111}")
+            assert response.status_code == 200
+            count = max(response.json()['count'], count)
+        print(count)
+        assert count <= 30
