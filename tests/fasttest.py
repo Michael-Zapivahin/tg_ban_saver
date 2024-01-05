@@ -231,7 +231,9 @@ async def handle_common_request(endpoint_method: str, request: Request, data=Bod
         chat_id: str = data['chat_id']
     except TypeError:
         chat_id: str = 'undefined'
+
     sending_started, sending_finished = Event(), Event()
+
     try:
         await common_sender_queue_input.send(
             (chat_id, sending_started, sending_finished)
@@ -348,15 +350,15 @@ async def cleanup_registries():
         last_sends.remove_obsolete_sends()
 
 
-@app.on_event("startup")
+@app.get("/start_tg")
 async def start_delay_manager():
     logging.basicConfig(
         level='INFO',
         format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     )
     async with asyncio.TaskGroup() as tg:
-        asyncio.create_task(cleanup_registries())
-        asyncio.create_task(manage_sending_delay(asyncio))
+        tg.create_task(cleanup_registries())
+        tg.create_task(manage_sending_delay(tg))
 
 
 if __name__ == "__main__":
