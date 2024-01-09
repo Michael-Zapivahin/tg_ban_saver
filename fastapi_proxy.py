@@ -1,4 +1,3 @@
-# uvicorn fastapi_proxy: app - -reload - -port 5000
 
 import asyncio
 import time
@@ -206,25 +205,6 @@ def log_request(func):
     return func_wrapped
 
 
-@app.get("/endpoint_method/{chat_id}")
-async def handle_common_testing(chat_id: int):
-    sending_started, sending_finished = Event(), Event()
-    try:
-        send_object = (chat_id, sending_started, sending_finished)
-        await common_sender_queue_input.send(send_object)
-        await sending_started.wait()
-        result = {
-            'ok': 'endpoint_method',
-            'count': len(last_sends.get_sends_in_progress()),
-        }
-    except:
-        result = {
-                    'error': 'endpoint_method',
-                    'count': count_queue(),
-                  }
-    return result
-
-
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
 async def handle_common_request(endpoint_method: str, request: Request, data=Body()):
     try:
@@ -349,15 +329,15 @@ async def cleanup_registries():
         last_sends.remove_obsolete_sends()
 
 
-@app.on_event("startup")
+@app.get("/start_tg")
 async def start_delay_manager():
     logging.basicConfig(
         level='INFO',
         format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     )
     async with asyncio.TaskGroup() as tg:
-        asyncio.create_task(cleanup_registries())
-        asyncio.create_task(manage_sending_delay(asyncio))
+        tg.create_task(cleanup_registries())
+        tg.create_task(manage_sending_delay(tg))
 
 
 if __name__ == "__main__":
