@@ -15,16 +15,16 @@ from fastapi import FastAPI, Request, BackgroundTasks, Body
 import httpx
 from threading import Thread
 from contextlib import asynccontextmanager
+from typing import Annotated
+
 
 tg_is_active = False
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # TODO выяснить сколько раз может запускаться lifespan в зависимости от настроек eventloop
-    print('before lifespan')
     asyncio.create_task(start_tg_manager())
     yield
-    print('after lifespan')
 
 
 app = FastAPI(lifespan=lifespan)
@@ -216,9 +216,9 @@ def log_request(func):
 
 
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
-async def handle_common_request(endpoint_method: str, request: Request, data=Body()):
+async def handle_common_request(endpoint_method: str, request: Request):
     try:
-        chat_id: str = data['chat_id']
+        chat_id: str = request.query_params['chat_id']
     except TypeError:
         chat_id: str = 'undefined'
     sending_started, sending_finished = Event(), Event()
