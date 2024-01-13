@@ -1,4 +1,3 @@
-
 import asyncio
 import time
 import dataclasses
@@ -12,16 +11,21 @@ from pydantic import BaseSettings
 import functools
 from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
-from fastapi import FastAPI, Request, BackgroundTasks, Body
+from fastapi import FastAPI, Request, Body
 import httpx
+from contextlib import asynccontextmanager
+
+tg_is_active = False
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(start_tg_manager())
+    yield
 
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 tg_session = httpx.AsyncClient()
-
-background_tasks = BackgroundTasks()
-
 
 ALL_TG_METHODS = [
     'sendMessage',
@@ -87,6 +91,8 @@ class SendRegistry(deque):
 
 
 last_sends = SendRegistry()
+
+
 # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
 
 class Settings(BaseSettings):
@@ -116,6 +122,7 @@ RESPONSE_HEADERS_WHITELIST = re.compile(
 )
 
 settings = Settings()
+
 
 def filter_tuples(headers, whitelist_regexp=REQUEST_HEADERS_WHITELIST):
     for key, value in headers:
@@ -162,7 +169,6 @@ def deny_on_429(func):
 
 @deny_on_429
 async def stream_http_request(fast_request):
-
     tg_server_url = settings.tg_server_url
     api_endpoint_url = f'{tg_server_url}{fast_request.url.path}'
 
@@ -193,7 +199,6 @@ async def stream_http_request(fast_request):
     )
 
 
-
 def log_request(func):
     @functools.wraps(func)
     async def func_wrapped(*args, **kwargs):
@@ -202,6 +207,7 @@ def log_request(func):
             return await func(*args, **kwargs)
         finally:
             logger.info(f'Request out. {args!r} {kwargs!r}')
+
     return func_wrapped
 
 
@@ -242,7 +248,7 @@ def count_queue():
 async def get_status():
     return {
         'messages_waited': count_queue(),
-        'banned_till': ban_429 and ban_429.banned_till >= datetime.now() and ban_429.banned_till.timestamp() or None, 
+        'banned_till': ban_429 and ban_429.banned_till >= datetime.now() and ban_429.banned_till.timestamp() or None,
     }
 
 
@@ -285,7 +291,6 @@ def get_throttler(rate, per):
 
 
 async def manage_sending_delay(tg):
-    
     async def register_sending_finished(sending_finished, send_record):
         try:
             await sending_finished.wait()
@@ -329,8 +334,7 @@ async def cleanup_registries():
         last_sends.remove_obsolete_sends()
 
 
-@app.get("/start_tg")
-async def start_delay_manager():
+async def start_tg_manager():
     logging.basicConfig(
         level='INFO',
         format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
