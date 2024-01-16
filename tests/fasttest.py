@@ -11,18 +11,13 @@ from pydantic import BaseSettings
 import functools
 from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
-from fastapi import FastAPI, Request, BackgroundTasks, Body
+from fastapi import FastAPI, Request
 import httpx
-from threading import Thread
 from contextlib import asynccontextmanager
-from typing import Annotated
 
-
-tg_is_active = False
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # TODO выяснить сколько раз может запускаться lifespan в зависимости от настроек eventloop
     asyncio.create_task(start_tg_manager())
     yield
 
@@ -41,6 +36,9 @@ ALL_TG_METHODS = [
 LIMITED_TG_METHODS = [
     'sendMessage',
     'sendPhoto',
+]
+UNLIMITED_TG_METHODS = [
+    'sendAnything',
 ]
 
 logger = logging.getLogger(__name__)
@@ -101,7 +99,8 @@ last_sends = SendRegistry()
 
 class Settings(BaseSettings):
     tg_token: str
-    tg_server_url: str = 'https://api.telegram.org'
+    # tg_server_url: str = 'https://api.telegram.org'
+    tg_server_url: str = 'http://127.0.0.1:5001'
     rollbar_token: str = ''
     rollbar_environment: str = 'development'
     # FIXME 30 на время, пока не удается выделить chat_id из request без его обнуления
@@ -172,9 +171,9 @@ def deny_on_429(func):
 
 
 @deny_on_429
-async def stream_http_request(fast_request):
+async def stream_http_request(request):
     tg_server_url = settings.tg_server_url
-    api_endpoint_url = f'{tg_server_url}{fast_request.url.path}'
+    api_endpoint_url = f'{tg_server_url}{request.url.path}'
 
     http_method_handlers = {
         'GET': tg_session.get,
@@ -182,15 +181,15 @@ async def stream_http_request(fast_request):
     }
 
     try:
-        call_http_method = http_method_handlers[fast_request.method]
+        call_http_method = http_method_handlers[request.method]
     except KeyError:
         raise MethodNotAllowed(valid_methods=http_method_handlers.keys())
 
     response = await call_http_method(
         api_endpoint_url,
-        params=fast_request.query_params,
-        headers=filter_tuples(fast_request.headers.items(), REQUEST_HEADERS_WHITELIST),
-        data=await fast_request.body(),
+        params=request.query_params,
+        headers=filter_tuples(request.headers.items(), REQUEST_HEADERS_WHITELIST),
+        data=await request.body(),
         # FIXME Should send content by chunks but asks library does not support that
     )
 
@@ -217,10 +216,17 @@ def log_request(func):
 
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
 async def handle_common_request(endpoint_method: str, request: Request):
+    if endpoint_method in UNLIMITED_TG_METHODS:
+        return await stream_http_request(request)
+
     try:
         chat_id: str = request.query_params['chat_id']
     except TypeError:
         chat_id: str = 'undefined'
+
+    logger.info(f'[{chat_id}] {endpoint_method} in.')
+    logger.info(f'queue_length={count_queue()}')
+
     sending_started, sending_finished = Event(), Event()
     try:
         await common_sender_queue_input.send(
@@ -234,7 +240,6 @@ async def handle_common_request(endpoint_method: str, request: Request):
 
 
 @app.get('/handle_file')
-@log_request
 async def handle_file(path: str, request: Request):
     return await stream_http_request(request)
 
@@ -248,50 +253,12 @@ def count_queue():
 
 
 @app.get('/status')
-@log_request
 async def get_status():
     return {
         'messages_waited': count_queue(),
         'banned_till': ban_429 and ban_429.banned_till >= datetime.now() and ban_429.banned_till.timestamp() or None,
     }
 
-
-class Object(object):
-    pass
-
-
-def get_throttler(rate, per):
-    """
-    Контролирует количество событий за заданный период в миллисекундах
-
-    Args:
-        per (int): количество миллисекунд
-        rate (int): количество событий
-
-    """
-    scope = Object()
-    scope.allowance = rate
-    scope.last_check = time.monotonic()
-
-    def throttler(func):
-        @functools.wraps(func)
-        async def inner(*args, **kwargs):
-            current = time.monotonic()
-            time_passed = current - scope.last_check
-            scope.last_check = current
-            scope.allowance = scope.allowance + time_passed * 1000 * (rate / per)
-            if scope.allowance > rate:
-                scope.allowance = rate
-
-            if scope.allowance < 1:
-                pass
-            else:
-                await func(*args, **kwargs)
-                scope.allowance = scope.allowance - 1
-
-        return inner
-
-    return throttler
 
 
 async def manage_sending_delay(tg):

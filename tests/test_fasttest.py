@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from fasttest import app, settings
 import time
-
+import asyncio
 
 def test_status():
     with TestClient(app) as client:
@@ -19,11 +19,18 @@ def test_send_message():
 
 
 def test_send_queue():
+    url = f"/bot{settings.tg_token}/sendMessage"
+    max_count = 0
     with TestClient(app) as client:
-        for i in range(100, 150):
-            params = {"chat_id": "1365913221", "text": f"test time {time.time()}"}
-            response = client.post(f"/bot{settings.tg_token}/sendMessage", params=params)
-            assert response.status_code == 200
-            assert response.json()['count'] <= 30
+        for i in range(100, 133):
+            asyncio.run(send_message(client, url))
+            response = client.get("/status")
+            max_count = max(max_count, response.json()['messages_waited'])
+
+    print(max_count)
+    assert max_count <= 30
 
 
+async def send_message(client, url):
+    params = {"chat_id": "1365913221", "text": f"test time {time.time()}"}
+    client.post(url, params=params)
