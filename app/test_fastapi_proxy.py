@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from fastapi_proxy import app, settings
+from app.fastapi_proxy import app, settings
 import time
 import asyncio
 

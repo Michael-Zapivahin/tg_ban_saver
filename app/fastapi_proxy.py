@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     requests_per_second_limit: int = 30
 
     class Config:
-        env_file = '.env'
+        env_file = '../.env'
         env_file_encoding = "utf-8"
 
 
