@@ -1,7 +1,7 @@
 
 from fastapi import FastAPI, Request
 import uvicorn
-from fastapi_proxy import settings
+from app.fastapi_proxy import settings
 
 
 app = FastAPI()

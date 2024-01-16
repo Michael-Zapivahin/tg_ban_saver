@@ -1,16 +1,16 @@
 
 from fastapi import FastAPI
 import uvicorn
-from fasttest import settings
+# from fasttest import settings
 
 
 
 app = FastAPI()
 
 
-@app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
-async def give_response(endpoint_method: str):
-    return True
+# @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
+# async def give_response(endpoint_method: str):
+#     return True
 
 
 @app.get('/get_test')
