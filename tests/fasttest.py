@@ -11,9 +11,13 @@ from pydantic import BaseSettings
 import functools
 from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
-from fastapi import FastAPI, Request
+
+from fastapi import FastAPI, Request, Body, Response
 import httpx
 from contextlib import asynccontextmanager
+from typing import Annotated, Any
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
 
 @asynccontextmanager
@@ -36,9 +40,6 @@ ALL_TG_METHODS = [
 LIMITED_TG_METHODS = [
     'sendMessage',
     'sendPhoto',
-]
-UNLIMITED_TG_METHODS = [
-    'sendAnything',
 ]
 
 logger = logging.getLogger(__name__)
@@ -99,8 +100,8 @@ last_sends = SendRegistry()
 
 class Settings(BaseSettings):
     tg_token: str
-    # tg_server_url: str = 'https://api.telegram.org'
-    tg_server_url: str = 'http://127.0.0.1:5001'
+    tg_server_url: str = 'https://api.telegram.org'
+    # tg_server_url: str = 'http://127.0.0.1:5001'
     rollbar_token: str = ''
     rollbar_environment: str = 'development'
     # FIXME 30 на время, пока не удается выделить chat_id из request без его обнуления
@@ -108,7 +109,7 @@ class Settings(BaseSettings):
     requests_per_second_limit: int = 30
 
     class Config:
-        env_file = '.env'
+        env_file = '../.env'
         env_file_encoding = "utf-8"
 
 
@@ -140,7 +141,7 @@ async def iterate_response_body(body_stream):
 
 def deny_on_429(func):
     @functools.wraps(func)
-    async def func_wrapped(quart_request):
+    async def func_wrapped(fastapi_request, payload):
         global ban_429
         if ban_429 and ban_429.banned_till < datetime.now():
             ban_429 = None
@@ -150,7 +151,7 @@ def deny_on_429(func):
             logger.info('429 request denied')
             return ban_429.get_http_response()
 
-        body, status, headers = await func(quart_request)
+        body, status, headers = await func(fastapi_request, payload)
 
         if status != 429:
             return body, status, headers
@@ -171,7 +172,7 @@ def deny_on_429(func):
 
 
 @deny_on_429
-async def stream_http_request(request):
+async def stream_http_request(request,  payload):
     tg_server_url = settings.tg_server_url
     api_endpoint_url = f'{tg_server_url}{request.url.path}'
 
@@ -187,7 +188,7 @@ async def stream_http_request(request):
 
     response = await call_http_method(
         api_endpoint_url,
-        params=request.query_params,
+        params=payload,
         headers=filter_tuples(request.headers.items(), REQUEST_HEADERS_WHITELIST),
         data=await request.body(),
         # FIXME Should send content by chunks but asks library does not support that
@@ -215,12 +216,13 @@ def log_request(func):
 
 
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
-async def handle_common_request(endpoint_method: str, request: Request):
-    if endpoint_method in UNLIMITED_TG_METHODS:
+async def handle_common_request(endpoint_method: str, request: Request, payload: Any = Body(None)):
+    is_limited = endpoint_method in LIMITED_TG_METHODS  # FIXME добавить больше методов API для торможения: sendPhoto, ...
+    if not is_limited:
         return await stream_http_request(request)
 
     try:
-        chat_id: str = request.query_params['chat_id']
+        chat_id = payload['chat_id']
     except TypeError:
         chat_id: str = 'undefined'
 
@@ -233,8 +235,9 @@ async def handle_common_request(endpoint_method: str, request: Request):
             (chat_id, sending_started, sending_finished)
         )
         await sending_started.wait()
-        results = await stream_http_request(request)
-        return results
+        results = await stream_http_request(request, payload)
+        json_compatible_item_data = jsonable_encoder(results)[0]
+        return Response(content=json_compatible_item_data)
     finally:
         sending_finished.set()
 
