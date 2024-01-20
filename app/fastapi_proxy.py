@@ -219,7 +219,9 @@ def log_request(func):
 async def handle_common_request(endpoint_method: str, request: Request, payload: Any = Body(None)):
     is_limited = endpoint_method in LIMITED_TG_METHODS  # FIXME добавить больше методов API для торможения: sendPhoto, ...
     if not is_limited:
-        return await stream_http_request(request)
+        body, _, _ = await stream_http_request(request, payload)
+        json_compatible_item_data = jsonable_encoder(body)
+        return Response(content=json_compatible_item_data)
 
     try:
         chat_id = payload['chat_id']
@@ -235,16 +237,18 @@ async def handle_common_request(endpoint_method: str, request: Request, payload:
             (chat_id, sending_started, sending_finished)
         )
         await sending_started.wait()
-        results = await stream_http_request(request, payload)
-        json_compatible_item_data = jsonable_encoder(results)[0]
+        body, _, _ = await stream_http_request(request, payload)
+        json_compatible_item_data = jsonable_encoder(body)
         return Response(content=json_compatible_item_data)
     finally:
         sending_finished.set()
 
 
 @app.get('/handle_file')
-async def handle_file(path: str, request: Request):
-    return await stream_http_request(request)
+async def handle_file(path: str, request: Request, payload: Any = Body(None)):
+    body, _, _ = await stream_http_request(request, payload)
+    json_compatible_item_data = jsonable_encoder(body)
+    return Response(content=json_compatible_item_data)
 
 
 def count_queue():
