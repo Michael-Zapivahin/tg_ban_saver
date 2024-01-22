@@ -15,9 +15,8 @@ from werkzeug.exceptions import MethodNotAllowed
 from fastapi import FastAPI, Request, Body, Response
 import httpx
 from contextlib import asynccontextmanager
-from typing import Annotated, Any
+from typing import Any
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
 
 
 @asynccontextmanager
@@ -101,10 +100,8 @@ last_sends = SendRegistry()
 class Settings(BaseSettings):
     tg_token: str
     tg_server_url: str = 'https://api.telegram.org'
-    # tg_server_url: str = 'http://127.0.0.1:5001'
     rollbar_token: str = ''
     rollbar_environment: str = 'development'
-    # FIXME 30 на время, пока не удается выделить chat_id из request без его обнуления
     per_chat_requests_per_second_limit: int = 30
     requests_per_second_limit: int = 30
 
