@@ -4,6 +4,40 @@ import time
 import asyncio
 
 
+
+def test_send_document():
+    url = f"https://api.telegram.org/bot{settings.tg_token}/sendDocument"
+    # httpx_mock.add_response(url=f'https://api.telegram.org{url}')
+    with TestClient(app) as client:
+        with open('epic.png', "rb") as f:
+            response = client.post(url, data={'chat_id': '1365913221'}, files={'document': f})
+            assert response.status_code == 200
+
+
+def test_send_message_with_buttons(httpx_mock):
+    text = 'Message proofs keyboard support.'
+    url = f"/bot{settings.tg_token}/sendMessage"
+    httpx_mock.add_response(url=f'https://api.telegram.org{url}')
+    payload = {
+        "chat_id": '1365913221',
+        "text": "Click to Open URL",
+        "parse_mode": "markdown",
+        "reply_markup": {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": text,
+                        "url": "http://example.com"
+                    }
+                ]
+            ]
+           }
+        }
+    with TestClient(app) as client:
+        response = client.post(url, params=payload)
+        assert response.status_code == 200
+
+
 def test_status():
     with TestClient(app) as client:
         response = client.get("/status")

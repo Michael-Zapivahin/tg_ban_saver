@@ -185,7 +185,7 @@ async def stream_http_request(request,  payload):
 
     response = await call_http_method(
         api_endpoint_url,
-        params=payload,
+        content=payload,
         headers=filter_tuples(request.headers.items(), REQUEST_HEADERS_WHITELIST),
         data=await request.body(),
         # FIXME Should send content by chunks but asks library does not support that
