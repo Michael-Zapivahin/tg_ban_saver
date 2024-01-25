@@ -63,7 +63,7 @@ def test_send_queue(httpx_mock):
     httpx_mock.add_response(url=f'https://api.telegram.org{url}')
     have_ban = False
     with TestClient(app) as client:
-        for _ in range(1, 3):
+        for _ in range(1, 32):
             response = send_message(client, url, '1365913221')
             if response.status_code == 429:
                 have_ban = True

@@ -127,7 +127,7 @@ class DebugFloodLimiter(deque):
                                 <title>You have a ban</title>
                             </head>
                             <body>
-                                <h1>count of messages {len(self)}</h1>
+                                <h1>count of messages {self.len}</h1>
                             </body>
                         </html>
                         """
