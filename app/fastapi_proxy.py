@@ -17,6 +17,7 @@ import httpx
 from contextlib import asynccontextmanager
 from typing import Any
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import HTMLResponse
 
 
 @asynccontextmanager
@@ -95,6 +96,46 @@ class SendRegistry(deque):
 last_sends = SendRegistry()
 
 
+class DebugFloodLimiter(deque):
+    ban: bool = False
+    len: int = 0
+
+    def append_record(self, record):
+        self.append(record)
+        self.len += 1
+        self.ban = self.len > settings.requests_per_second_limit
+
+    def remove_obsolete_sends(self, moment_before: float = None):
+        for send in self:
+            self.remove(send)
+
+    def get_sends(self):
+        return [send for send in self]
+
+    def same_chat_sends_since(self, chat_id, moment_before: float = None):
+        same_chat_sends = [send for send in last_sends if send.chat_id == chat_id]
+
+        moment_before = moment_before or time.monotonic() - 1
+        return [
+            send for send in same_chat_sends if not send.finished_at or send.finished_at > moment_before
+        ]
+
+    def get_response_ban(self):
+        html_content = f"""
+                        <html>
+                            <head>
+                                <title>You have a ban</title>
+                            </head>
+                            <body>
+                                <h1>count of messages {len(self)}</h1>
+                            </body>
+                        </html>
+                        """
+        return HTMLResponse(content=html_content, status_code=429)
+
+
+debug_proxy = DebugFloodLimiter()
+
 # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
 
 class Settings(BaseSettings):
@@ -103,7 +144,8 @@ class Settings(BaseSettings):
     rollbar_token: str = ''
     rollbar_environment: str = 'development'
     per_chat_requests_per_second_limit: int = 30
-    requests_per_second_limit: int = 30
+    requests_per_second_limit: int = 11
+    debug: bool = False
 
     class Config:
         env_file = '../.env'
@@ -136,6 +178,15 @@ async def iterate_response_body(body_stream):
         yield chunk
 
 
+def ban_debug_mode(len_queue):
+    ban_429 = Ban429(
+        banned_till=datetime.now(),
+        response_body_payload={"test_ban": True, "len_queue": len_queue}
+    )
+    return ban_429.get_http_response()
+
+
+
 def deny_on_429(func):
     @functools.wraps(func)
     async def func_wrapped(fastapi_request, payload):
@@ -166,7 +217,6 @@ def deny_on_429(func):
         return ban_429.get_http_response()
 
     return func_wrapped
-
 
 @deny_on_429
 async def stream_http_request(request,  payload):
@@ -225,10 +275,18 @@ async def handle_common_request(endpoint_method: str, request: Request, payload:
     except TypeError:
         chat_id: str = 'undefined'
 
+
     logger.info(f'[{chat_id}] {endpoint_method} in.')
     logger.info(f'queue_length={count_queue()}')
 
     sending_started, sending_finished = Event(), Event()
+
+    if settings.debug:
+        debug_proxy.append_record((chat_id, sending_started, sending_finished))
+        if debug_proxy.ban:
+            return debug_proxy.get_response_ban()
+                # HTMLResponse(content=debug_proxy.get_response_ban(), status_code=429))
+
     try:
         await common_sender_queue_input.send(
             (chat_id, sending_started, sending_finished)
