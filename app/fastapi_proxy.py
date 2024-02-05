@@ -12,12 +12,14 @@ import functools
 from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
 
-from fastapi import FastAPI, Request, Body, Response
+from fastapi import FastAPI, Request, Body, Response, UploadFile
 import httpx
 from contextlib import asynccontextmanager
 from typing import Any
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from typing import Annotated
+from fastapi import File
 
 
 @asynccontextmanager
@@ -99,39 +101,27 @@ last_sends = SendRegistry()
 class DebugFloodLimiter(deque):
     ban: bool = False
     len: int = 0
+    chats = {}
 
-    def append_record(self, record):
+    def append_record(self, record, chat_id: str):
         self.append(record)
         self.len += 1
         self.ban = self.len > settings.requests_per_second_limit
-
-    def remove_obsolete_sends(self, moment_before: float = None):
-        for send in self:
-            self.remove(send)
-
-    def get_sends(self):
-        return [send for send in self]
-
-    def same_chat_sends_since(self, chat_id, moment_before: float = None):
-        same_chat_sends = [send for send in last_sends if send.chat_id == chat_id]
-
-        moment_before = moment_before or time.monotonic() - 1
-        return [
-            send for send in same_chat_sends if not send.finished_at or send.finished_at > moment_before
-        ]
+        if self.chats.get(chat_id):
+            self.chats[chat_id] += 1
+        else:
+            self.chats[chat_id] = 1
+        self.ban = self.chats[chat_id] > settings.per_chat_requests_per_second_limit
 
     def get_response_ban(self):
-        html_content = f"""
-                        <html>
-                            <head>
-                                <title>You have a ban</title>
-                            </head>
-                            <body>
-                                <h1>count of messages {self.len}</h1>
-                            </body>
-                        </html>
-                        """
-        return HTMLResponse(content=html_content, status_code=429)
+        return JSONResponse(
+            status_code=429,
+            content={
+                "message": "You have a ban",
+                "count": self.len,
+                "chats": self.chats
+            }
+        )
 
 
 debug_proxy = DebugFloodLimiter()
@@ -143,8 +133,8 @@ class Settings(BaseSettings):
     tg_server_url: str = 'https://api.telegram.org'
     rollbar_token: str = ''
     rollbar_environment: str = 'development'
-    per_chat_requests_per_second_limit: int = 30
-    requests_per_second_limit: int = 11
+    per_chat_requests_per_second_limit: int = 10
+    requests_per_second_limit: int = 30
     debug: bool = False
 
     class Config:
@@ -176,15 +166,6 @@ def filter_tuples(headers, whitelist_regexp=REQUEST_HEADERS_WHITELIST):
 async def iterate_response_body(body_stream):
     async for chunk in body_stream():
         yield chunk
-
-
-def ban_debug_mode(len_queue):
-    ban_429 = Ban429(
-        banned_till=datetime.now(),
-        response_body_payload={"test_ban": True, "len_queue": len_queue}
-    )
-    return ban_429.get_http_response()
-
 
 
 def deny_on_429(func):
@@ -263,7 +244,12 @@ def log_request(func):
 
 
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
-async def handle_common_request(endpoint_method: str, request: Request, payload: Any = Body(None)):
+async def handle_common_request(
+        endpoint_method: str,
+        request: Request,
+        payload: Any = Body(None),
+):
+    # print(file.filename)
     is_limited = endpoint_method in LIMITED_TG_METHODS  # FIXME добавить больше методов API для торможения: sendPhoto, ...
     if not is_limited:
         body, _, _ = await stream_http_request(request, payload)
@@ -275,17 +261,15 @@ async def handle_common_request(endpoint_method: str, request: Request, payload:
     except TypeError:
         chat_id: str = 'undefined'
 
-
     logger.info(f'[{chat_id}] {endpoint_method} in.')
     logger.info(f'queue_length={count_queue()}')
 
     sending_started, sending_finished = Event(), Event()
 
     if settings.debug:
-        debug_proxy.append_record((chat_id, sending_started, sending_finished))
+        debug_proxy.append_record((chat_id, sending_started, sending_finished), chat_id)
         if debug_proxy.ban:
             return debug_proxy.get_response_ban()
-                # HTMLResponse(content=debug_proxy.get_response_ban(), status_code=429))
 
     try:
         await common_sender_queue_input.send(

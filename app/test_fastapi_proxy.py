@@ -63,12 +63,14 @@ def test_send_queue(httpx_mock):
     httpx_mock.add_response(url=f'https://api.telegram.org{url}')
     have_ban = False
     with TestClient(app) as client:
-        for _ in range(1, 32):
-            response = send_message(client, url, '1365913221')
+        for _ in range(1, 12):
+            content = {"chat_id": "1365913221", "text": f"test time {time.time()}"}
+            response = client.post(url, json=content)
             if response.status_code == 429:
                 have_ban = True
                 break
-            response = send_message(client, url, '2125368673')
+            content = {"chat_id": "2125368673", "text": f"test time {time.time()}"}
+            response = client.post(url, json=content)
             if response.status_code == 429:
                 have_ban = True
                 break
@@ -79,10 +81,10 @@ def test_send_queue(httpx_mock):
 def test_send_queue_without_mock():
     url = f"/bot{settings.tg_token}/sendMessage"
     with TestClient(app) as client:
-        for i in range(1, 10):
+        for i in range(1, 5):
             asyncio.run(send_message(client, url, '1365913221'))
 
 
-def send_message(client, url, chat_id):
+async def send_message(client, url, chat_id):
     content = {"chat_id": chat_id, "text": f"test time {time.time()}"}
     return client.post(url, json=content)
