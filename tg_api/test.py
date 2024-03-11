@@ -1,6 +1,6 @@
-from urllib import request
-
-from tg_api import SyncTgClient, SendMessageRequest
+# from urllib import request
+#
+# from tg_api import SyncTgClient, SendMessageRequest
 import requests
 from time import sleep
 
@@ -8,23 +8,26 @@ from time import sleep
 class TgSetting():
     chat_id = '1365913221'
     token = '6635610575:AAElSJZ3-2pSShXyx6PxHMQCMbca-Hhdd_c'
+    server_url = 'http://213.171.6.57:5000'
+    # server_url = 'http://127.0.0.1:5000'
 
 
-def send_message(message):
-    token, tg_chat_id = TgSetting().token, TgSetting().chat_id
-    with SyncTgClient.setup(token):
-        tg_request = SendMessageRequest(chat_id=tg_chat_id, text=message)
-        response = tg_request.send()
-        return response.json()
+def send_message_test(message):
+    token, tg_chat_id = '6635610575:AAElSJZ3-2pSShXyx6PxHMQCMbca-Hhdd_c', '1365913221'
+    url = f'https://api.telegram.org/bot{token}/sendMessage'
+    params = {'chat_id': tg_chat_id, 'text': f'test for {message}'}
+    response = requests.post(url, data=params)
+    return response.text
 
 
 def check_status_proxy():
-    return requests.get('http://127.0.0.1:5000/status').json()
+    response = requests.get(f'{TgSetting().server_url}/status')
+    return response.json()
 
 
 def test_debug_get_ban():
     token, chat_id = TgSetting().token, TgSetting().chat_id
-    url = f'http://127.0.0.1:5000/bot{token}/sendMessage'
+    url = f'{TgSetting().server_url}/bot{token}/sendMessage'
     for i in range(12):
         params = {'chat_id': chat_id, 'text': f'test for ban {i}'}
         response = requests.post(url, data=params)
@@ -37,7 +40,7 @@ def test_debug_get_ban():
 
 
 
-print(check_status_proxy())
+# print(check_status_proxy())
+print(send_message('Hi Mic'))
 
-test_debug_get_ban()
 
