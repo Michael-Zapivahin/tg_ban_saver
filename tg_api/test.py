@@ -1,6 +1,6 @@
 # from urllib import request
 #
-# from tg_api import SyncTgClient, SendMessageRequest
+from tg_api import SyncTgClient, SendMessageRequest
 import requests
 from time import sleep
 
@@ -8,8 +8,9 @@ from time import sleep
 class TgSetting():
     chat_id = '1365913221'
     token = '6635610575:AAElSJZ3-2pSShXyx6PxHMQCMbca-Hhdd_c'
-    server_url = 'http://213.171.6.57:5000'
+    # server_url = 'http://213.171.6.57:5000'
     # server_url = 'http://127.0.0.1:5000'
+    server_url = 'api.telegram.org'
 
 
 settings = TgSetting()
@@ -42,9 +43,19 @@ def test_debug_get_ban():
             pass
 
 
+def get_tg_ban():
+    token, chat_id = settings.token, settings.chat_id
+    with SyncTgClient.setup(token=token):
+        for i in range(500):
+            tg_request = SendMessageRequest(chat_id=chat_id, text=f'Hello Mic! {i}')
+            response = tg_request.send()
+            if not response.error_code:
+                print(response.json())
 
 
-print(check_status_proxy())
+
+# print(check_status_proxy())
 # print(send_message_test('Hi Mic'))
-test_debug_get_ban()
+
+get_tg_ban()
 
