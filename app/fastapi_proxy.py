@@ -266,6 +266,8 @@ def send_message_test():
 
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
 async def handle_common_request(endpoint_method: str, request: Request, payload: Any = Body(None)):
+    logger.info(f'post {endpoint_method} in.')
+
     is_limited = endpoint_method in LIMITED_TG_METHODS  # FIXME добавить больше методов API для торможения: sendPhoto, ...
     if not is_limited:
         body, _, _ = await stream_http_request(request, payload)
