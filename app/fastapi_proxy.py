@@ -150,6 +150,8 @@ class Settings(BaseSettings):
     requests_per_second_limit: int = 2
     debug: bool = False
     debug_time: int = 4
+    server_url = '213.171.6.57'
+    # server_url = '127.0.0.1'
 
     class Config:
         env_file = '../.env'
@@ -384,7 +386,7 @@ async def start_tg_manager():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=5000)
+    uvicorn.run(app, host=settings.server_url, port=5000)
 
 
 
