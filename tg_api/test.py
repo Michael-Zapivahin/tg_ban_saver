@@ -45,6 +45,6 @@ def test_debug_get_ban():
 
 
 print(check_status_proxy())
-# print(send_message_test('Hi Mic'))
+print(send_message_test('Hi Mic'))
 # test_debug_get_ban()
 

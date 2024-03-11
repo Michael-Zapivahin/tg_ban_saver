@@ -267,7 +267,6 @@ def send_message_test():
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
 async def handle_common_request(endpoint_method: str, request: Request, payload: Any = Body(None)):
     logger.info(f'post {endpoint_method} in.')
-
     is_limited = endpoint_method in LIMITED_TG_METHODS  # FIXME добавить больше методов API для торможения: sendPhoto, ...
     if not is_limited:
         body, _, _ = await stream_http_request(request, payload)
@@ -277,9 +276,11 @@ async def handle_common_request(endpoint_method: str, request: Request, payload:
     try:
         chat_id = payload['chat_id']
     except TypeError:
-        chat_id: str = 'undefined'
+        chat_id: str = '1365913221'
 
-    logger.info(f'[{chat_id}] {endpoint_method} in.')
+    logger.info(f'chat_id {chat_id}.')
+
+    logger.info(f'[{chat_id}] {endpoint_method} .')
     logger.info(f'queue_length={count_queue()}')
 
     sending_started, sending_finished = Event(), Event()
@@ -365,6 +366,7 @@ async def manage_sending_delay(tg):
 async def cleanup_registries():
     while True:
         await sleep(1)
+        logger.info('cleanup_registries')
         last_sends.remove_obsolete_sends()
         if settings.debug:
             if debug_proxy.ban:
