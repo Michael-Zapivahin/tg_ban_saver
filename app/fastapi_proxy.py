@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+import requests
 
 
 @asynccontextmanager
@@ -254,6 +255,14 @@ def log_request(func):
             logger.info(f'Request out. {args!r} {kwargs!r}')
 
     return func_wrapped
+
+@app.post("/send_message_test")
+def send_message_test():
+    token, tg_chat_id = '6635610575:AAElSJZ3-2pSShXyx6PxHMQCMbca-Hhdd_c', '1365913221'
+    url = f'https://api.telegram.org/bot{token}/sendMessage'
+    params = {'chat_id': tg_chat_id, 'text': f'test for message'}
+    response = requests.post(url, data=params)
+    return response.text
 
 
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
