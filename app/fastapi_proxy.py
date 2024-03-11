@@ -7,7 +7,7 @@ from collections import deque
 import uvicorn
 import re
 import logging
-from pydantic import BaseSettings
+# from pydantic import BaseSettings
 import functools
 from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
@@ -143,9 +143,9 @@ class DebugFloodLimiter(deque):
 debug_proxy = DebugFloodLimiter()
 
 # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
-class Settings(BaseSettings):
-    tg_token: str
-    tg_server_url: str = 'https://api.telegram.org'
+class Settings():
+    tg_token = '6635610575:AAElSJZ3-2pSShXyx6PxHMQCMbca-Hhdd_c'
+    tg_server_url = 'https://api.telegram.org'
     per_chat_requests_per_second_limit: int = 1
     requests_per_second_limit: int = 2
     debug: bool = False
@@ -153,9 +153,6 @@ class Settings(BaseSettings):
     server_url = '213.171.6.57'
     # server_url = '127.0.0.1'
 
-    class Config:
-        env_file = '../.env'
-        env_file_encoding = "utf-8"
 
 
 REQUEST_HEADERS_WHITELIST = re.compile(
