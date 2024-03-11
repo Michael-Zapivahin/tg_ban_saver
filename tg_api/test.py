@@ -53,9 +53,5 @@ def get_tg_ban():
                 print(response.json())
 
 
-
-# print(check_status_proxy())
-# print(send_message_test('Hi Mic'))
-
 get_tg_ban()
 
