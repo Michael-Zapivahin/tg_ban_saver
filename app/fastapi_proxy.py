@@ -12,14 +12,12 @@ import functools
 from anyio import create_memory_object_stream, Event, sleep
 from werkzeug.exceptions import MethodNotAllowed
 
-from fastapi import FastAPI, Request, Body, Response, UploadFile
+from fastapi import FastAPI, Request, Body, Response
 import httpx
 from contextlib import asynccontextmanager
 from typing import Any
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import HTMLResponse, JSONResponse
-from typing import Annotated
-from fastapi import File
+from fastapi.responses import JSONResponse
 
 
 @asynccontextmanager
@@ -102,40 +100,55 @@ class DebugFloodLimiter(deque):
     ban: bool = False
     len: int = 0
     chats = {}
+    ban_time_sec = 0
+
+    def set_ban(self):
+        if self.ban:
+            return
+
+        self.ban = True
+        self.ban_time_sec = settings.debug_time
 
     def append_record(self, record, chat_id: str):
         self.append(record)
         self.len += 1
-        self.ban = self.len > settings.requests_per_second_limit
+
         if self.chats.get(chat_id):
             self.chats[chat_id] += 1
         else:
             self.chats[chat_id] = 1
-        self.ban = self.chats[chat_id] > settings.per_chat_requests_per_second_limit
+
+        if max(
+            self.len > settings.requests_per_second_limit,
+            self.chats[chat_id] > settings.per_chat_requests_per_second_limit
+        ):
+            self.set_ban()
 
     def get_response_ban(self):
+        response_ban = {
+            'ok': False,
+            'error_code': 429,
+            'description': f'Too Many Requests: retry after {self.ban_time_sec}',
+            'parameters': {
+                'retry_after': self.ban_time_sec,
+            }
+        }
         return JSONResponse(
             status_code=429,
-            content={
-                "message": "You have a ban",
-                "count": self.len,
-                "chats": self.chats
-            }
+            content=response_ban,
         )
 
 
 debug_proxy = DebugFloodLimiter()
 
 # записи о ранее отправленных сообщениях и тех, что отправляются прямо сейчас
-
 class Settings(BaseSettings):
     tg_token: str
     tg_server_url: str = 'https://api.telegram.org'
-    rollbar_token: str = ''
-    rollbar_environment: str = 'development'
-    per_chat_requests_per_second_limit: int = 10
-    requests_per_second_limit: int = 30
+    per_chat_requests_per_second_limit: int = 1
+    requests_per_second_limit: int = 2
     debug: bool = False
+    debug_time: int = 4
 
     class Config:
         env_file = '../.env'
@@ -244,12 +257,7 @@ def log_request(func):
 
 
 @app.post(f"/bot{settings.tg_token}/{{endpoint_method}}")
-async def handle_common_request(
-        endpoint_method: str,
-        request: Request,
-        payload: Any = Body(None),
-):
-    # print(file.filename)
+async def handle_common_request(endpoint_method: str, request: Request, payload: Any = Body(None)):
     is_limited = endpoint_method in LIMITED_TG_METHODS  # FIXME добавить больше методов API для торможения: sendPhoto, ...
     if not is_limited:
         body, _, _ = await stream_http_request(request, payload)
@@ -306,7 +314,6 @@ async def get_status():
     }
 
 
-
 async def manage_sending_delay(tg):
     async def register_sending_finished(sending_finished, send_record):
         try:
@@ -342,13 +349,18 @@ async def manage_sending_delay(tg):
 
         tg.create_task(register_sending_finished(sending_finished, sent_record))
         # TODO make a clever delay by the last_sends
-        # await sleep(1 / settings.requests_per_second_limit)
+        await sleep(1 / settings.requests_per_second_limit)
 
 
 async def cleanup_registries():
     while True:
         await sleep(1)
         last_sends.remove_obsolete_sends()
+        if settings.debug:
+            if debug_proxy.ban:
+                debug_proxy.ban_time_sec = max(0, debug_proxy.ban_time_sec-1)
+                if debug_proxy.ban_time_sec == 0:
+                    debug_proxy.ban = False
 
 
 async def start_tg_manager():
@@ -356,6 +368,7 @@ async def start_tg_manager():
         level='INFO',
         format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     )
+    logger.info(f'Debug mode is {settings.debug}.')
     async with asyncio.TaskGroup() as tg:
         tg.create_task(cleanup_registries())
         tg.create_task(manage_sending_delay(tg))
