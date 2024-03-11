@@ -12,9 +12,13 @@ class TgSetting():
     # server_url = 'http://127.0.0.1:5000'
 
 
+settings = TgSetting()
+
+
 def send_message_test(message):
-    token, tg_chat_id = '6635610575:AAElSJZ3-2pSShXyx6PxHMQCMbca-Hhdd_c', '1365913221'
-    url = f'https://api.telegram.org/bot{token}/sendMessage'
+    token, tg_chat_id = settings.token, settings.chat_id
+    # url = f'https://api.telegram.org/bot{token}/sendMessage'
+    url = f'{settings.server_url}/bot{token}/sendMessage'
     params = {'chat_id': tg_chat_id, 'text': f'test for {message}'}
     response = requests.post(url, data=params)
     return response.text
@@ -26,21 +30,21 @@ def check_status_proxy():
 
 
 def test_debug_get_ban():
-    token, chat_id = TgSetting().token, TgSetting().chat_id
-    url = f'{TgSetting().server_url}/bot{token}/sendMessage'
-    for i in range(12):
+    token, chat_id = settings.token, settings.chat_id
+    url = f'{settings.server_url}/bot{token}/sendMessage'
+    for i in range(5):
         params = {'chat_id': chat_id, 'text': f'test for ban {i}'}
         response = requests.post(url, data=params)
         if response.status_code != 200:
             print(response.json())
-            sleep(0.5)
+            # sleep(0.5)
         else:
             pass
 
 
 
 
-# print(check_status_proxy())
-print(send_message('Hi Mic'))
-
+print(check_status_proxy())
+# print(send_message_test('Hi Mic'))
+# test_debug_get_ban()
 
