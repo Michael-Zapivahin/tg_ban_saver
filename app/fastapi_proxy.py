@@ -366,7 +366,7 @@ async def manage_sending_delay(tg):
 async def cleanup_registries():
     while True:
         await sleep(1)
-        logger.info('cleanup_registries')
+        # logger.info('cleanup_registries')
         last_sends.remove_obsolete_sends()
         if settings.debug:
             if debug_proxy.ban:
