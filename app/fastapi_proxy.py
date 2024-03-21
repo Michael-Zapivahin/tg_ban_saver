@@ -150,8 +150,8 @@ class Settings():
     requests_per_second_limit: int = 2
     debug: bool = False
     debug_time: int = 4
-    server_url = '213.171.6.57'
-    # server_url = '127.0.0.1'
+    # server_url = '213.171.6.57'
+    server_url = '127.0.0.1'
 
 
 

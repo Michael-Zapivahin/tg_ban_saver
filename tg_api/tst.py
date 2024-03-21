@@ -7,10 +7,7 @@ from time import sleep
 
 class TgSetting():
     chat_id = '1365913221'
-    token = '6635610575:AAElSJZ3-2pSShXyx6PxHMQCMbca-Hhdd_c'
-    # server_url = 'http://213.171.6.57:5000'
-    server_url = 'http://127.0.0.1:5000'
-    # server_url = 'api.telegram.org'
+
 
 
 settings = TgSetting()
@@ -74,16 +71,14 @@ def send_picture():
 
 def send_file():
     token, chat_id = settings.token, settings.chat_id
-    url = f'{settings.server_url}/bot{token}/sendDocument'
-    files = {'document': open('tst.py', 'rb')}
+    url = f'{settings.server_url}/bot{token}/sendMessage'
+    files = {'file': open('', 'rb')}
     data = {'chat_id': chat_id, 'text': f'send file'}
     response = requests.post(url, files=files, data=data)
     print(response.json())
 
-
-
 if __name__ == "__main__":
-    send_file()
+    send_picture()
 
 
 
